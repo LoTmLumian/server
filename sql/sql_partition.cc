@@ -6138,12 +6138,12 @@ err:
   utility basis.
 */
 
-class Alter_partition_logger
+class Alter_partition_drop
 {
 protected:
   const char *path;
-  uint from_name_type; /* NORMAL_PART_NAME, TEMP_PART_NAME, RENAMED_PART_NAME */
-  uint to_name_type;   /* same + SKIP_PART_NAME */
+  enum_part_name_type from_name_type; /* NORMAL_PART_NAME, TEMP_PART_NAME, RENAMED_PART_NAME */
+  enum_part_name_type to_name_type;   /* same + SKIP_PART_NAME */
 
   DDL_LOG_ENTRY ddl_log_entry;
 
@@ -6168,7 +6168,7 @@ public:
     NO_PHASE= 255
   } phase;
 
-  Alter_partition_logger(ALTER_PARTITION_PARAM_TYPE *lpt) :
+  Alter_partition_drop(ALTER_PARTITION_PARAM_TYPE *lpt) :
     path(lpt->path), from_name_type(SKIP_PART_NAME),
     to_name_type(SKIP_PART_NAME),
     lpt(lpt), table(lpt->table), part_info(lpt->part_info),
@@ -6179,9 +6179,9 @@ public:
     DBUG_ASSERT(table->file->ht->db_type == DB_TYPE_PARTITION_DB);
   }
 
-  virtual ~Alter_partition_logger() {}
-  bool iterate(Phase phase, uint from_name_arg, uint to_name_arg,
-               List<partition_element> *parts);
+  virtual ~Alter_partition_drop() {}
+  bool iterate(Phase phase, enum_part_name_type from_name_arg,
+               enum_part_name_type to_name_arg, List<partition_element> *parts);
 
   /**
     Make from_name, to_name according to from_name_type, to_name_type.
@@ -6262,9 +6262,12 @@ public:
     return false;
   }
 
+#ifdef DBUG_OFF
+#define DEBUG_CRASH_OR_FAIL false
+#else
+#define DEBUG_CRASH_OR_FAIL debug_crash_or_fail
   bool debug_crash_or_fail()
   {
-#ifndef DBUG_OFF
     switch (phase)
     {
     case RENAME_TO_BACKUPS:
@@ -6282,13 +6285,16 @@ public:
     default:
       break;
     }
-#endif
     return false;
   }
+#endif
 
+#ifdef DBUG_OFF
+#define DEBUG_ASSERT_STATES(A) false
+#else
+#define DEBUG_ASSERT_STATES(A) debug_assert_states(A)
   void debug_assert_states(partition_element *part_elem)
   {
-#ifndef DBUG_OFF
     switch (phase)
     {
     case RENAME_TO_BACKUPS:
@@ -6332,8 +6338,8 @@ public:
       DBUG_ASSERT(0);
       break;
     }
-#endif
   }
+#endif
 
   /**
     The body of iteration: each partition selected by check_state() is
@@ -6347,7 +6353,7 @@ public:
   bool process_partition(partition_element *part_elem,
                          partition_element *sub_elem)
   {
-    debug_assert_states(part_elem);
+    DEBUG_ASSERT_STATES(part_elem);
     DDL_LOG_STATE *output_chain= rollback_chain;
 
     switch (phase)
@@ -6387,7 +6393,7 @@ public:
       int ha_err;
       DBUG_ASSERT(table->file->ht->db_type == DB_TYPE_PARTITION_DB);
       handler *file= (phase & (RENAME_ADDED_PARTS|CONVERT_IN) ?
-                      hp->get_new_handler(part_elem, sub_elem) :
+                      hp->new_handler(part_elem, sub_elem) :
                       hp->get_child_handler(part_elem, sub_elem));
       ha_err= file->ha_rename_table(from_name, to_name);
       if (ha_err ||
@@ -6398,7 +6404,7 @@ public:
       }
     }
 
-    return debug_crash_or_fail();
+    return DEBUG_CRASH_OR_FAIL();
   }
 };
 
@@ -6407,7 +6413,7 @@ public:
   ADD PARTITION action
 */
 
-class Alter_partition_add : public Alter_partition_logger
+class Alter_partition_add : public Alter_partition_drop
 {
 protected:
   uint disable_non_uniq_indexes;
@@ -6415,7 +6421,7 @@ protected:
 
 public:
   Alter_partition_add(ALTER_PARTITION_PARAM_TYPE *lpt) :
-             Alter_partition_logger(lpt)
+             Alter_partition_drop(lpt)
   {
     disable_non_uniq_indexes= hp->indexes_are_disabled();
   }
@@ -6449,7 +6455,7 @@ public:
     DBUG_ASSERT(phase == ADD_PARTITIONS);
     DBUG_ASSERT(!ha_err);
 
-    if (Alter_partition_logger::process_partition(part_elem, sub_elem))
+    if (Alter_partition_drop::process_partition(part_elem, sub_elem))
       return true;
 
     ha_err= hp->create_partition(table, lpt->create_info, from_name,
@@ -6624,7 +6630,7 @@ public:
     case LOG_DROP_BACKUPS:
     case CONVERT_OUT:
     case CONVERT_IN:
-      return Alter_partition_logger::process_partition(part_elem, sub_elem);
+      return Alter_partition_drop::process_partition(part_elem, sub_elem);
     default:
       DBUG_ASSERT(0);
       return true;
@@ -6634,8 +6640,9 @@ public:
 };
 
 
-bool Alter_partition_logger::iterate(Phase phase_arg,
-                                     uint from_name_arg, uint to_name_arg,
+bool Alter_partition_drop::iterate(Phase phase_arg,
+                                     enum_part_name_type from_name_arg,
+                                     enum_part_name_type to_name_arg,
                                      List<partition_element> *parts)
 {
   phase= phase_arg;
@@ -6874,8 +6881,6 @@ bool backup_log_alter_partition(ALTER_PARTITION_PARAM_TYPE *lpt)
 }
 
 
-extern bool alter_partition_convert_in(ALTER_PARTITION_PARAM_TYPE *lpt);
-
 /**
   Check that definition of source table fits definition of partition being
   added and every row stored in the table conforms partition's expression.
@@ -7011,7 +7016,7 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
 
   if (alter_info->partition_flags & ALTER_PARTITION_DROP)
   {
-    Alter_partition_logger action_drop(lpt);
+    Alter_partition_drop action_drop(lpt);
 
     /*
        part_info chain contains roll forward actions,
