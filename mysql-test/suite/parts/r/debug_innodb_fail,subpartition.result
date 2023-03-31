@@ -848,7 +848,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -944,7 +944,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -3352,7 +3352,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -3447,7 +3447,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5297,7 +5297,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5395,7 +5395,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5496,7 +5496,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5594,7 +5594,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5695,7 +5695,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5793,7 +5793,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5894,7 +5894,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -5992,7 +5992,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -6487,7 +6487,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd
@@ -6585,7 +6585,7 @@ ERROR HY000: Unknown error
 show warnings;
 Level	Code	Message
 Error	1105	Unknown error
-Error	1030	Got error 0 "Internal error/check (Not system error)" from storage engine InnoDB
+Error	1030	Got error 22 "Invalid argument" from storage engine InnoDB
 db.opt
 t1#P#p0#SP#p0sp0.ibd
 t1#P#p0#SP#p0sp1.ibd

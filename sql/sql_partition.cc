@@ -6124,6 +6124,13 @@ err:
 }
 
 
+#ifndef DBUG_OFF
+#define HA_ERR_INJECT(code) (ERROR_INJECT(code) && (ha_err= EINVAL))
+#else
+#define HA_ERR_INJECT(code) false
+#endif
+
+
 /**
   DDL logger and partiton renamer
 
@@ -6315,11 +6322,11 @@ public:
     case LOG_DROP_BACKUPS:
       DBUG_ASSERT(from_name_type == RENAMED_PART_NAME);
       DBUG_ASSERT(to_name_type == SKIP_PART_NAME);
-      DBUG_ASSERT(part_elem->part_state & (
-                    PART_TO_BE_DROPPED |
-                    PART_TO_BE_REORGED |
-                    PART_REORGED_DROPPED |
-                    PART_CHANGED));
+      DBUG_ASSERT(part_elem->part_state &
+                  (PART_TO_BE_DROPPED |
+                   PART_TO_BE_REORGED |
+                   PART_REORGED_DROPPED |
+                   PART_CHANGED));
       break;
     default:
       DBUG_ASSERT(0);
@@ -6373,10 +6380,7 @@ public:
     ddl_log_entry.next_entry= output_chain->list ?
                                 output_chain->list->entry_pos : 0;
     if (ddl_log_write(output_chain, &ddl_log_entry))
-    {
-      my_error(ER_DDL_LOG_ERROR, MYF(0));
       return true;
-    }
 
     if (ddl_log_entry.action_type == DDL_LOG_RENAME_TABLE_ACTION)
     {
@@ -6387,7 +6391,7 @@ public:
                       hp->get_child_handler(part_elem, sub_elem));
       ha_err= file->ha_rename_table(from_name, to_name);
       if (ha_err ||
-          ERROR_INJECT("alter_partition_rename_table"))
+          HA_ERR_INJECT("alter_partition_rename_table"))
       {
         file->print_error(ha_err, MYF(0));
         return true;
@@ -6452,7 +6456,7 @@ public:
                                  sub_elem ? sub_elem : part_elem,
                                  disable_non_uniq_indexes);
     if (ha_err ||
-        ERROR_INJECT("alter_partition_add"))
+        HA_ERR_INJECT("alter_partition_add"))
     {
       hp->print_error(ha_err, MYF(0));
       hp->cleanup_new_partition();
@@ -6513,11 +6517,11 @@ public:
       return true;
     }
 
-    if (ERROR_INJECT("change_partition_add_parts_1") ||
+    if (HA_ERR_INJECT("change_partition_add_parts_1") ||
         (ha_err= hp->copy_partitions(&lpt->copied, &lpt->deleted)) ||
-        ERROR_INJECT("change_partition_add_parts_2") ||
+        HA_ERR_INJECT("change_partition_add_parts_2") ||
         (ha_err= mysql_trans_commit_alter_copy_data(thd, false)) ||
-        ERROR_INJECT("change_partition_add_parts_3"))
+        HA_ERR_INJECT("change_partition_add_parts_3"))
     {
       (void) mysql_trans_commit_alter_copy_data(thd, true);
       hp->print_error(ha_err, MYF(0));
