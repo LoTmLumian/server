@@ -306,8 +306,14 @@ bool write_log_replace_frm(ALTER_PARTITION_PARAM_TYPE *lpt,
 #endif
 
 int __attribute__((warn_unused_result))
+  create_partition_name(LEX_CSTRING *out, const char *in1, const char
+                        *in2, uint name_variant, bool translate);
+int __attribute__((warn_unused_result))
   create_partition_name(char *out, size_t outlen, const char *in1, const char
                         *in2, uint name_variant, bool translate);
+int __attribute__((warn_unused_result))
+  create_subpartition_name(LEX_CSTRING *out, const char *in1, const
+                           char *in2, const char *in3, uint name_variant);
 int __attribute__((warn_unused_result))
   create_subpartition_name(char *out, size_t outlen, const char *in1, const
                            char *in2, const char *in3, uint name_variant);

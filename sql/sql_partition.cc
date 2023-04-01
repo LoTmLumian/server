@@ -6147,8 +6147,9 @@ protected:
 
   DDL_LOG_ENTRY ddl_log_entry;
 
-  char from_name[FN_REFLEN + 1];
-  char to_name[FN_REFLEN + 1];
+  char from_name_buf[FN_REFLEN + 1];
+  char to_name_buf[FN_REFLEN + 1];
+  LEX_CSTRING from_name, to_name;
   ALTER_PARTITION_PARAM_TYPE *lpt;
   TABLE *table;
   partition_info *part_info;
@@ -6171,6 +6172,7 @@ public:
   Alter_partition_drop(ALTER_PARTITION_PARAM_TYPE *lpt) :
     path(lpt->path), from_name_type(SKIP_PART_NAME),
     to_name_type(SKIP_PART_NAME),
+    from_name{NULL, 0}, to_name{NULL, 0},
     lpt(lpt), table(lpt->table), part_info(lpt->part_info),
     rollback_chain(&lpt->rollback_chain),
     cleanup_chain(&lpt->cleanup_chain),
@@ -6205,29 +6207,37 @@ public:
                    ha_resolve_storage_engine_name(ht));
     if (!sub_elem)
     {
-      if (from_name_type != SKIP_PART_NAME &&
-          create_partition_name(from_name, sizeof(from_name), path,
-                                part_elem->partition_name, from_name_type,
-                                true /* translate */))
-        return true;
-      if (to_name_type != SKIP_PART_NAME &&
-          create_partition_name(to_name, sizeof(to_name), path,
-                                part_elem->partition_name, to_name_type,
-                                true /* translate */))
-            return true;
+      if (from_name_type != SKIP_PART_NAME)
+      {
+        from_name= { from_name_buf, sizeof(from_name_buf) };
+        if (create_partition_name(&from_name, path, part_elem->partition_name,
+                                  from_name_type, true /* translate */))
+          return true;
+      }
+      if (to_name_type != SKIP_PART_NAME)
+      {
+        to_name= { to_name_buf, sizeof(to_name_buf) };
+        if (create_partition_name(&to_name, path, part_elem->partition_name,
+                                  to_name_type, true /* translate */))
+          return true;
+      }
     }
     else
     {
-      if (from_name_type != SKIP_PART_NAME &&
-          create_subpartition_name(from_name, sizeof(from_name), path,
-                                   part_elem->partition_name,
-                                   sub_elem->partition_name, from_name_type))
-        return true;
-      if (to_name_type != SKIP_PART_NAME &&
-          create_subpartition_name(to_name, sizeof(to_name), path,
-                                  part_elem->partition_name,
-                                  sub_elem->partition_name, to_name_type))
-            return true;
+      if (from_name_type != SKIP_PART_NAME)
+      {
+        from_name= { from_name_buf, sizeof(from_name_buf) };
+        if (create_subpartition_name(&from_name, path, part_elem->partition_name,
+                                     sub_elem->partition_name, from_name_type))
+          return true;
+      }
+      if (to_name_type != SKIP_PART_NAME)
+      {
+        to_name= { to_name_buf, sizeof(to_name_buf) };
+        if (create_subpartition_name(&to_name, path, part_elem->partition_name,
+                                     sub_elem->partition_name, to_name_type))
+          return true;
+      }
     }
 
     return false;
@@ -6313,13 +6323,13 @@ public:
     case CONVERT_OUT:
       DBUG_ASSERT(from_name_type == NORMAL_PART_NAME);
       DBUG_ASSERT(to_name_type == SKIP_PART_NAME);
-      DBUG_ASSERT(to_name[0]); /* to_name is external table name */
+      DBUG_ASSERT(to_name.str); /* to_name is external table name */
       DBUG_ASSERT(part_elem->part_state & PART_TO_BE_DROPPED);
       break;
     case CONVERT_IN:
       DBUG_ASSERT(from_name_type == SKIP_PART_NAME);
       DBUG_ASSERT(to_name_type == NORMAL_PART_NAME);
-      DBUG_ASSERT(to_name[0]); /* to_name is external table name */
+      DBUG_ASSERT(to_name.str); /* to_name is external table name */
       DBUG_ASSERT(part_elem->part_state & PART_TO_BE_ADDED);
       break;
     case ADD_PARTITIONS:
@@ -6364,16 +6374,16 @@ public:
     case CONVERT_IN:
       ddl_log_entry.action_type= DDL_LOG_RENAME_TABLE_ACTION;
       ddl_log_entry.phase= DDL_RENAME_PHASE_TABLE;
-      ddl_log_entry.name= { from_name, strlen(from_name) };
-      ddl_log_entry.from_name= { to_name, strlen(to_name) };
+      ddl_log_entry.name= from_name;
+      ddl_log_entry.from_name= to_name;
       break;
     case ADD_PARTITIONS:
       ddl_log_entry.action_type= DDL_LOG_DROP_TABLE_ACTION;
-      ddl_log_entry.tmp_name= { from_name, strlen(from_name) };
+      ddl_log_entry.tmp_name= from_name;
       break;
     case LOG_DROP_BACKUPS:
       ddl_log_entry.action_type= DDL_LOG_DROP_TABLE_ACTION;
-      ddl_log_entry.tmp_name= { from_name, strlen(from_name) };
+      ddl_log_entry.tmp_name= from_name;
       output_chain= cleanup_chain;
       /* cleanup_chain cannot be executed before rollback_chain */
       ddl_log_link_chains(cleanup_chain, rollback_chain);
@@ -6395,7 +6405,7 @@ public:
       handler *file= (phase & (RENAME_ADDED_PARTS|CONVERT_IN) ?
                       hp->new_handler(part_elem, sub_elem) :
                       hp->get_child_handler(part_elem, sub_elem));
-      ha_err= file->ha_rename_table(from_name, to_name);
+      ha_err= file->ha_rename_table(from_name.str, to_name.str);
       if (ha_err ||
           HA_ERR_INJECT("alter_partition_rename_table"))
       {
@@ -6458,7 +6468,7 @@ public:
     if (Alter_partition_drop::process_partition(part_elem, sub_elem))
       return true;
 
-    ha_err= hp->create_partition(table, lpt->create_info, from_name,
+    ha_err= hp->create_partition(table, lpt->create_info, from_name.str,
                                  sub_elem ? sub_elem : part_elem,
                                  disable_non_uniq_indexes);
     if (ha_err ||
@@ -6581,9 +6591,10 @@ public:
 
   bool convert_out()
   {
-    build_table_filename(to_name, sizeof(to_name) - 1,
-                         lpt->alter_ctx->new_db.str,
-                         lpt->alter_ctx->new_name.str, "", 0);
+    to_name.length= build_table_filename(to_name_buf, sizeof(to_name_buf) - 1,
+                                          lpt->alter_ctx->new_db.str,
+                                          lpt->alter_ctx->new_name.str, "", 0);
+    to_name.str= to_name_buf;
 
     processed_state= PART_TO_BE_DROPPED;
     if (iterate(CONVERT_OUT, NORMAL_PART_NAME, SKIP_PART_NAME,
@@ -6607,9 +6618,10 @@ public:
       return true;
     }
 
-    build_table_filename(from_name, sizeof(from_name) - 1,
-                         table_from->db.str, table_from->table_name.str,
-                         "", 0);
+    from_name.length= build_table_filename(from_name_buf, sizeof(from_name_buf) - 1,
+                                            table_from->db.str, table_from->table_name.str,
+                                            "", 0);
+    from_name.str= from_name_buf;
 
     processed_state= PART_TO_BE_ADDED;
     if (iterate(CONVERT_IN, SKIP_PART_NAME, NORMAL_PART_NAME,
@@ -8420,9 +8432,11 @@ static const char *longest_str(const char *s1, const char *s2,
   TODO: MDEV-28844 Merge create_partition_name() and create_subpartition_name()
 */
 
-int create_partition_name(char *out, size_t outlen, const char *in1,
+int create_partition_name(LEX_CSTRING *out_str, const char *in1,
                           const char *in2, uint name_variant, bool translate)
 {
+  char *out= const_cast<char *>(out_str->str);
+  size_t outlen= out_str->length;
   char transl_part_name[FN_REFLEN];
   const char *transl_part, *end;
   DBUG_ASSERT(outlen >= FN_REFLEN + 1); // consistency! same limit everywhere
@@ -8444,13 +8458,23 @@ int create_partition_name(char *out, size_t outlen, const char *in1,
     DBUG_ASSERT(name_variant == RENAMED_PART_NAME);
     end= strxnmov(out, outlen-1, in1, "#P#", transl_part, "#REN#", NullS);
   }
-  if (end - out == static_cast<ptrdiff_t>(outlen-1))
+  out_str->length= end - out;
+  if (out_str->length == outlen - 1)
   {
     my_error(ER_PATH_LENGTH, MYF(0), longest_str(in1, transl_part));
     return HA_WRONG_CREATE_OPTION;
   }
   return 0;
 }
+
+
+int create_partition_name(char *out, size_t outlen, const char *in1,
+                          const char *in2, uint name_variant, bool translate)
+{
+  LEX_CSTRING out_str= { out, outlen };
+  return create_partition_name(&out_str, in1, in2, name_variant, translate);
+}
+
 
 /**
   Create subpartition name. This method is used to calculate the
@@ -8467,10 +8491,12 @@ int create_partition_name(char *out, size_t outlen, const char *in1,
     @retval false             Success.
 */
 
-int create_subpartition_name(char *out, size_t outlen,
+int create_subpartition_name(LEX_CSTRING *out_str,
                              const char *in1, const char *in2,
                              const char *in3, uint name_variant)
 {
+  char *out= const_cast<char *>(out_str->str);
+  size_t outlen= out_str->length;
   char transl_part_name[FN_REFLEN], transl_subpart_name[FN_REFLEN], *end;
   DBUG_ASSERT(outlen >= FN_REFLEN + 1); // consistency! same limit everywhere
 
@@ -8489,7 +8515,8 @@ int create_subpartition_name(char *out, size_t outlen,
     end= strxnmov(out, outlen-1, in1, "#P#", transl_part_name,
                   "#SP#", transl_subpart_name, "#REN#", NullS);
   }
-  if (end - out == static_cast<ptrdiff_t>(outlen-1))
+  out_str->length= end - out;
+  if (out_str->length == outlen - 1)
   {
     my_error(ER_PATH_LENGTH, MYF(0),
              longest_str(in1, transl_part_name, transl_subpart_name));
@@ -8497,6 +8524,16 @@ int create_subpartition_name(char *out, size_t outlen,
   }
   return 0;
 }
+
+
+int create_subpartition_name(char *out, size_t outlen,
+                             const char *in1, const char *in2,
+                             const char *in3, uint name_variant)
+{
+  LEX_CSTRING out_str= { out, outlen };
+  return create_subpartition_name(&out_str, in1, in2, in3, name_variant);
+}
+
 
 uint get_partition_field_store_length(Field *field)
 {
