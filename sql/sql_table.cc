@@ -860,7 +860,7 @@ bool mysql_write_frm(ALTER_PARTITION_PARAM_TYPE *lpt, uint flags)
 
     DBUG_RETURN(false);
   }
-  if (flags == WFRM_BACKUP_ORIGINAL)
+  if (flags & WFRM_LOG_RESTORE)
   {
     strxnmov(frm_name, sizeof(frm_name), path, reg_ext, NullS);
 
@@ -885,10 +885,8 @@ bool mysql_write_frm(ALTER_PARTITION_PARAM_TYPE *lpt, uint flags)
                                                           CHF_RENAME_FLAG))
       DBUG_RETURN(TRUE);
   }
-#else /* !WITH_PARTITION_STORAGE_ENGINE */
-  DBUG_ASSERT(!(flags & WFRM_BACKUP_ORIGINAL));
 #endif /* !WITH_PARTITION_STORAGE_ENGINE */
-  if (flags & WFRM_INSTALL_SHADOW)
+  if (flags & WFRM_BACKUP_AND_INSTALL)
   {
     /*
       Build frm file name
@@ -904,19 +902,6 @@ bool mysql_write_frm(ALTER_PARTITION_PARAM_TYPE *lpt, uint flags)
       completing this we write a new phase to the log entry that will
       deactivate it.
     */
-    if (!(flags & WFRM_BACKUP_ORIGINAL) && (
-        mysql_file_delete(key_file_frm, frm_name, MYF(MY_WME))
-#ifdef WITH_PARTITION_STORAGE_ENGINE
-        || lpt->table->file->ha_create_partitioning_metadata(path, shadow_path,
-                                                          CHF_DELETE_FLAG) ||
-        ddl_log_increment_phase(rollback_chain->main_entry->entry_pos) ||
-        (ddl_log_sync(), FALSE)
-#endif
-      ))
-    {
-      error= 1;
-      goto err;
-    }
     if (mysql_file_rename(key_file_frm, shadow_frm_name, frm_name, MYF(MY_WME))
 #ifdef WITH_PARTITION_STORAGE_ENGINE
         || lpt->table->file->ha_create_partitioning_metadata(path, shadow_path,

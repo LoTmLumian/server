@@ -81,10 +81,14 @@ enum enum_explain_filename_mode
 /* depends on errmsg.txt Database `db`, Table `t` ... */
 #define EXPLAIN_FILENAME_MAX_EXTRA_LENGTH 63
 
+/* Shadow FRM is new table FRM prepared by ALTER TABLE */
 #define WFRM_WRITE_SHADOW 1
-#define WFRM_INSTALL_SHADOW 2
-#define WFRM_WRITE_CONVERTED_TO 4
-#define WFRM_BACKUP_ORIGINAL 8
+/* Backup original FRM and install shadow FRM */
+#define WFRM_BACKUP_AND_INSTALL 2
+/* Create FRM for table produced by CONVERT OUT */
+#define WFRM_WRITE_CONVERTED_TO 8
+/* Restore original FRM */
+#define WFRM_LOG_RESTORE 16
 
 /* Flags for conversion functions. */
 static const uint FN_FROM_IS_TMP=  1 << 0;

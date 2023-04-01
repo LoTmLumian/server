@@ -6248,7 +6248,7 @@ public:
   */
 
   virtual
-  bool check_state(partition_element *part_elem)
+  bool needs_processing(partition_element *part_elem)
   {
     return part_elem->part_state == PART_TO_BE_DROPPED;
   }
@@ -6365,6 +6365,7 @@ public:
   {
     DEBUG_ASSERT_STATES(part_elem);
     DDL_LOG_STATE *output_chain= rollback_chain;
+    bool do_rename= false;
 
     switch (phase)
     {
@@ -6376,6 +6377,7 @@ public:
       ddl_log_entry.phase= DDL_RENAME_PHASE_TABLE;
       ddl_log_entry.name= from_name;
       ddl_log_entry.from_name= to_name;
+      do_rename= true;
       break;
     case ADD_PARTITIONS:
       ddl_log_entry.action_type= DDL_LOG_DROP_TABLE_ACTION;
@@ -6398,7 +6400,7 @@ public:
     if (ddl_log_write(output_chain, &ddl_log_entry))
       return true;
 
-    if (ddl_log_entry.action_type == DDL_LOG_RENAME_TABLE_ACTION)
+    if (do_rename)
     {
       int ha_err;
       DBUG_ASSERT(table->file->ht->db_type == DB_TYPE_PARTITION_DB);
@@ -6436,7 +6438,7 @@ public:
     disable_non_uniq_indexes= hp->indexes_are_disabled();
   }
 
-  bool check_state(partition_element *part_elem)
+  bool needs_processing(partition_element *part_elem)
   {
     return part_elem->part_state == PART_TO_BE_ADDED;
   }
@@ -6497,7 +6499,7 @@ class Alter_partition_change : public Alter_partition_add
 public:
   using Alter_partition_add::Alter_partition_add;
 
-  bool check_state(partition_element *part_elem)
+  bool needs_processing(partition_element *part_elem)
   {
     return part_elem->part_state & processed_state;
   }
@@ -6525,6 +6527,11 @@ public:
       return true;
     }
 
+    /*
+      Call Alter_partition_add::process_partition() for each
+      (PART_TO_BE_ADDED|PART_CHANGED) partition to create the partitions
+    */
+
     processed_state= (PART_TO_BE_ADDED|PART_CHANGED);
     if (iterate(ADD_PARTITIONS, TEMP_PART_NAME, SKIP_PART_NAME,
                 &part_info->partitions))
@@ -6539,6 +6546,7 @@ public:
         (ha_err= mysql_trans_commit_alter_copy_data(thd, false)) ||
         HA_ERR_INJECT("change_partition_add_parts_3"))
     {
+      /* Rollback the transaction */
       (void) mysql_trans_commit_alter_copy_data(thd, true);
       hp->print_error(ha_err, MYF(0));
       return true;
@@ -6554,6 +6562,15 @@ public:
   bool rename_parts()
   {
     DEBUG_SYNC(lpt->thd, "before_rename_partitions");
+    /*
+      Rename to backups
+
+      For REORGANIZE partitions rebuilt are inside temp_partitions marked by
+      PART_TO_BE_REORGED, partitions dropped are inside partitions marked by
+      PART_REORGED_DROPPED.
+
+      For REBUILD partitions are marked by PART_CHANGED.
+    */
     if (part_info->temp_partitions.elements)
     {
       processed_state= PART_TO_BE_REORGED;
@@ -6566,11 +6583,23 @@ public:
                 &part_info->partitions) ||
         ERROR_INJECT("change_partition_rename_parts_1"))
       return true;
+    /*
+      Rename from temporary newly added or rebuilt partitions
+
+      REORGANIZE adds new partitions in PART_TO_BE_ADDED state.
+      REBUILD uses PART_CHANGED state for rewriting partitions.
+    */
     processed_state= PART_TO_BE_ADDED|PART_CHANGED;
     if (iterate(RENAME_ADDED_PARTS, TEMP_PART_NAME, NORMAL_PART_NAME,
                 &part_info->partitions) ||
         ERROR_INJECT("change_partition_rename_parts_2"))
       return true;
+    /*
+      Log drop backups
+
+      Above backed up partitions must be dropped at the latest stage of processing
+      (see ddl_log_revert(cleanup_chain) in fast_alter_partition_table()).
+    */
     if (part_info->temp_partitions.elements)
     {
       processed_state= PART_TO_BE_REORGED;
@@ -6664,21 +6693,19 @@ bool Alter_partition_drop::iterate(Phase phase_arg,
   partition_element *part_elem;
   while ((part_elem= part_it++))
   {
-    if (check_state(part_elem))
+    if (needs_processing(part_elem))
     {
       if (part_info->is_sub_partitioned())
       {
         List_iterator<partition_element> sub_it(part_elem->subpartitions);
-        uint num_subparts= part_info->num_subparts;
-        uint j= 0;
-        do
+        partition_element *sub_elem;
+        while ((sub_elem= sub_it++))
         {
-          partition_element *sub_elem= sub_it++;
           if (build_names(part_elem, sub_elem))
             return true;
           if (process_partition(part_elem, sub_elem))
             return true;
-        } while (++j < num_subparts);
+        }
       }
       else
       {
@@ -7037,6 +7064,66 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
        If cleanup_chain is active part_info chain is not executed.
     */
 
+    /*
+      Now after all checks and setting state on dropped partitions we can
+      start the actual dropping of the partitions.
+
+      Drop partition is actually two things happening. The first is that
+      a lot of records are deleted. The second is that the behaviour of
+      subsequent updates and writes and deletes will change. The delete
+      part can be handled without any particular high lock level by
+      transactional engines whereas non-transactional engines need to
+      ensure that this change is done with an exclusive lock on the table.
+      The second part, the change of partitioning does however require
+      an exclusive lock to install the new partitioning as one atomic
+      operation. If this is not the case, it is possible for two
+      transactions to see the change in a different order than their
+      serialisation order. Thus we need an exclusive lock for both
+      transactional and non-transactional engines.
+
+      For LIST partitions it could be possible to avoid the exclusive lock
+      (and for RANGE partitions if they didn't rearrange range definitions
+      after a DROP PARTITION) if one ensured that failed accesses to the
+      dropped partitions was aborted for sure (thus only possible for
+      transactional engines).
+
+      0) Write an entry that removes the shadow frm file if crash occurs
+      1) Write the new frm file as a shadow frm
+      2) Get an exclusive metadata lock on the table (waits for all active
+         transactions using this table). This ensures that we
+         can release all other locks on the table and since no one can open
+         the table, there can be no new threads accessing the table. They
+         will be hanging on this exclusive lock.
+      3) Write the ddl log to ensure that the operation is completed
+         even in the presence of a MySQL Server crash (the log is executed
+         before any other threads are started, so there are no locking issues).
+      4) Close the table that have already been opened but didn't stumble on
+         the abort locked previously. This is done as part of the
+         alter_close_table call.
+      5) Rename to backups logged by restoring from backups
+      6) Log drop of backup FRM
+      7) Log restore from backup FRM
+      8) Backup old FRM file, install the new frm file
+      9) Old place for binary logging
+      10) Drop backups, remove entries from ddl log
+      11) Reopen table if under lock tables
+      12) Write the bin log
+          Unfortunately the writing of the binlog is not synchronised with
+          other logging activities. So no matter in which order the binlog
+          is written compared to other activities there will always be cases
+          where crashes make strange things occur. In this placement it can
+          happen that the ALTER TABLE DROP PARTITION gets performed in the
+          master but not in the slaves if we have a crash, after writing the
+          ddl log but before writing the binlog. A solution to this would
+          require writing the statement first in the ddl log and then
+          when recovering from the crash read the binlog and insert it into
+          the binlog if not written already.
+      13) Complete query
+
+      We insert Error injections at all places where it could be interesting
+      to test if recovery is properly done.
+    */
+
     if (write_log_drop_shadow_frm(lpt) ||
         ERROR_INJECT("drop_partition_1") ||
         mysql_write_frm(lpt, WFRM_WRITE_SHADOW) ||
@@ -7049,9 +7136,9 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
         ERROR_INJECT("drop_partition_5") ||
         write_log_drop_backup_frm(lpt) ||
         ERROR_INJECT("drop_partition_6") ||
-        mysql_write_frm(lpt, WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_LOG_RESTORE) ||
         ERROR_INJECT("drop_partition_7") ||
-        mysql_write_frm(lpt, WFRM_INSTALL_SHADOW|WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_BACKUP_AND_INSTALL) ||
         ERROR_INJECT("drop_partition_8") ||
         backup_log_alter_partition(lpt) ||
         alter_partition_binlog(lpt))
@@ -7061,6 +7148,7 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
   {
     Alter_partition_change action_conv_out(lpt);
 
+    /* Create FRM for table converted from partition, log-protected by dropping FRM */
     if (mysql_write_frm(lpt, WFRM_WRITE_CONVERTED_TO) ||
         ERROR_INJECT("convert_partition_1") ||
         write_log_drop_shadow_frm(lpt) ||
@@ -7071,13 +7159,14 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
         ERROR_INJECT("convert_partition_4") ||
         alter_close_table(lpt) ||
         ERROR_INJECT("convert_partition_5") ||
+        /* Rename partition file to table file, log-protected by reverse rename */
         action_conv_out.convert_out() ||
         ERROR_INJECT("convert_partition_6") ||
         write_log_drop_backup_frm(lpt) ||
         ERROR_INJECT("convert_partition_7") ||
-        mysql_write_frm(lpt, WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_LOG_RESTORE) ||
         ERROR_INJECT("convert_partition_8") ||
-        mysql_write_frm(lpt, WFRM_INSTALL_SHADOW|WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_BACKUP_AND_INSTALL) ||
         ERROR_INJECT("convert_partition_9") ||
         backup_log_alter_partition(lpt) ||
         alter_partition_binlog(lpt))
@@ -7108,13 +7197,14 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
         ERROR_INJECT("convert_partition_4") ||
         alter_close_table(lpt) ||
         ERROR_INJECT("convert_partition_5") ||
+        /* Rename table file to partition file, log-protected by reverse rename */
         action_conv_in.convert_in() ||
         ERROR_INJECT("convert_partition_6") ||
         write_log_drop_backup_frm(lpt) ||
         ERROR_INJECT("convert_partition_7") ||
-        mysql_write_frm(lpt, WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_LOG_RESTORE) ||
         ERROR_INJECT("convert_partition_8") ||
-        mysql_write_frm(lpt, WFRM_INSTALL_SHADOW|WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_BACKUP_AND_INSTALL) ||
         ERROR_INJECT("convert_partition_9") ||
         backup_log_alter_partition(lpt) ||
         alter_partition_binlog(lpt))
@@ -7136,6 +7226,34 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
     DBUG_ASSERT(!(alter_info->partition_flags & ALTER_PARTITION_CONVERT_IN));
     Alter_partition_add action_add(lpt);
 
+    /*
+      ADD RANGE/LIST PARTITIONS
+      In this case there are no tuples removed and no tuples are added.
+      Thus the operation is merely adding a new partition. Thus it is
+      necessary to perform the change as an atomic operation. Otherwise
+      someone reading without seeing the new partition could potentially
+      miss updates made by a transaction serialised before it that are
+      inserted into the new partition.
+
+      0) Write an entry that removes the shadow frm file if crash occurs
+      1) Write the new frm file as a shadow frm file
+      2) Get an exclusive metadata lock on the table (waits for all active
+         transactions using this table). This ensures that we
+         can release all other locks on the table and since no one can open
+         the table, there can be no new threads accessing the table. They
+         will be hanging on this exclusive lock.
+      3) Add the new partitions logged by dropping them
+      4) Close all instances of the table and remove them from the table cache.
+      5) Log drop of backup FRM
+      6) Log restore from backup FRM
+      7) Backup old FRM file, install the new frm file
+      8) Old place for write binlog
+      9) Drop backups, remove entries from ddl log
+      10) Reopen tables if under lock tables
+      11) Write to binlog
+      12) Complete query
+    */
+
     if (write_log_drop_shadow_frm(lpt) ||
         ERROR_INJECT("add_partition_1") ||
         mysql_write_frm(lpt, WFRM_WRITE_SHADOW) ||
@@ -7148,9 +7266,9 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
         ERROR_INJECT("add_partition_5") ||
         write_log_drop_backup_frm(lpt) ||
         ERROR_INJECT("add_partition_6") ||
-        mysql_write_frm(lpt, WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_LOG_RESTORE) ||
         ERROR_INJECT("add_partition_7") ||
-        mysql_write_frm(lpt, WFRM_INSTALL_SHADOW|WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_BACKUP_AND_INSTALL) ||
         ERROR_INJECT("add_partition_8") ||
         backup_log_alter_partition(lpt) ||
         alter_partition_binlog(lpt))
@@ -7160,6 +7278,58 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
   {
     /* ADD HASH / COALESCE / REBUILD / REORGANIZE */
     Alter_partition_change action_change(lpt);
+
+    /*
+      ADD HASH PARTITION/
+      COALESCE PARTITION/
+      REBUILD PARTITION/
+      REORGANIZE PARTITION
+
+      In this case all records are still around after the change although
+      possibly organised into new partitions, thus by ensuring that all
+      updates go to both the old and the new partitioning scheme we can
+      actually perform this operation lock-free. The only exception to
+      this is when REORGANIZE PARTITION adds/drops ranges. In this case
+      there needs to be an exclusive lock during the time when the range
+      changes occur.
+      This is only possible if the handler can ensure double-write for a
+      period. The double write will ensure that it doesn't matter where the
+      data is read from since both places are updated for writes. If such
+      double writing is not performed then it is necessary to perform the
+      change with the usual exclusive lock. With double writes it is even
+      possible to perform writes in parallel with the reorganisation of
+      partitions.
+
+      Without double write procedure we get the following procedure.
+      The only difference with using double write is that we can downgrade
+      the lock to TL_WRITE_ALLOW_WRITE. Double write in this case only
+      double writes from old to new. If we had double writing in both
+      directions we could perform the change completely without exclusive
+      lock for HASH partitions.
+      Handlers that perform double writing during the copy phase can actually
+      use a lower lock level. This can be handled inside store_lock in the
+      respective handler.
+
+      0) Write an entry that removes the shadow frm file if crash occurs.
+      1) Write the shadow frm file of new partitioning.
+      4) Get an exclusive metadata lock on the table (waits for all active
+         transactions using this table). This ensures that we
+         can release all other locks on the table and since no one can open
+         the table, there can be no new threads accessing the table. They
+         will be hanging on this exclusive lock.
+      2) Log remove and add the new partitions, copy data.
+      5) Close the table.
+      6) Rename to backups and rename added parts, both preliminarily logged by
+         reverse operation.
+      5) Log drop of backup FRM
+      6) Log restore from backup FRM
+      7) Backup old FRM file, install the new frm file
+      8) Old place for write bin log.
+      9) Drop backups, remove entries from ddl log
+      10) Reopen the table if under lock tables.
+      11) Write to binlog
+      12) Complete query
+    */
 
     if (write_log_drop_shadow_frm(lpt) ||
         ERROR_INJECT("change_partition_1") ||
@@ -7175,9 +7345,9 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
         ERROR_INJECT("change_partition_6") ||
         write_log_drop_backup_frm(lpt) ||
         ERROR_INJECT("change_partition_7") ||
-        mysql_write_frm(lpt, WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_LOG_RESTORE) ||
         ERROR_INJECT("change_partition_8") ||
-        mysql_write_frm(lpt, WFRM_INSTALL_SHADOW|WFRM_BACKUP_ORIGINAL) ||
+        mysql_write_frm(lpt, WFRM_BACKUP_AND_INSTALL) ||
         ERROR_INJECT("change_partition_9") ||
         backup_log_alter_partition(lpt) ||
         alter_partition_binlog(lpt))
