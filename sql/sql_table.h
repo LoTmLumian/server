@@ -114,7 +114,7 @@ uint build_table_filename(char *buff, size_t bufflen, const char *db,
                           const char *table, const char *ext, uint flags);
 uint build_table_shadow_filename(char *buff, size_t bufflen,
                                  ALTER_PARTITION_PARAM_TYPE *lpt,
-                                 bool backup= false);
+                                 const char *infix= "shadow");
 void build_lower_case_table_filename(char *buff, size_t bufflen,
                                      const LEX_CSTRING *db,
                                      const LEX_CSTRING *table,

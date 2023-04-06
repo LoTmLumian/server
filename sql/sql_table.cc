@@ -683,12 +683,11 @@ void build_lower_case_table_filename(char *buff, size_t bufflen,
 
 uint build_table_shadow_filename(char *buff, size_t bufflen, 
                                  ALTER_PARTITION_PARAM_TYPE *lpt,
-                                 bool backup)
+                                 const char *infix)
 {
   char tmp_name[FN_REFLEN];
   my_snprintf(tmp_name, sizeof (tmp_name), "%s-%s-%lx-%s", tmp_file_prefix,
-              backup ? "backup" : "shadow",
-              (ulong) current_thd->thread_id, lpt->table_name.str);
+              infix, (ulong) current_thd->thread_id, lpt->table_name.str);
   return build_table_filename(buff, bufflen, lpt->db.str, tmp_name, "",
                               FN_IS_TMP);
 }
@@ -864,7 +863,7 @@ bool mysql_write_frm(ALTER_PARTITION_PARAM_TYPE *lpt, uint flags)
   {
     strxnmov(frm_name, sizeof(frm_name), path, reg_ext, NullS);
 
-    build_table_shadow_filename(bak_path, sizeof(bak_path) - 1, lpt, true);
+    build_table_shadow_filename(bak_path, sizeof(bak_path) - 1, lpt, "backup");
     strxmov(bak_frm_name, bak_path, reg_ext, NullS);
 
     DDL_LOG_MEMORY_ENTRY *main_entry= rollback_chain->main_entry;

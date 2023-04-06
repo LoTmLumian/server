@@ -6723,44 +6723,31 @@ bool Alter_partition_drop::iterate(Phase phase_arg,
 /*
   Write the log entry to ensure that the shadow frm file is removed at
   crash.
+
   SYNOPSIS
     write_log_drop_frm()
     lpt                      Struct containing parameters
+    drop_chain               Cleanup chain
+    path                     Location of FRM file
+    cond_entry               DDL log conditional entry pos
 
   RETURN VALUES
     TRUE                     Error
     FALSE                    Success
   DESCRIPTION
-    Prepare an entry to the ddl log indicating a drop/install of the shadow frm
+    Write an entry to the ddl log indicating a drop/install of the frm
     file and its corresponding handler file.
 */
 
-static bool write_log_drop_frm(ALTER_PARTITION_PARAM_TYPE *lpt,
-                               DDL_LOG_STATE *drop_chain,
-                               bool drop_backup)
+static bool write_log_drop_frm(DDL_LOG_STATE *drop_chain,
+                               const char *path, uint cond_entry)
 {
-  char path[FN_REFLEN + 1];
   DBUG_ENTER("write_log_drop_frm");
-
-  build_table_shadow_filename(path, sizeof(path) - 1, lpt, drop_backup);
   mysql_mutex_lock(&LOCK_gdl);
-  if (ddl_log_delete_frm(drop_chain, (const char*)path))
+  if (ddl_log_delete_frm(drop_chain, path))
     goto error;
 
-  if (drop_backup && (lpt->alter_info->partition_flags & ALTER_PARTITION_CONVERT_IN))
-  {
-    TABLE_LIST *table_from= lpt->table_list->next_local;
-    build_table_filename(path, sizeof(path) - 1, table_from->db.str,
-                         table_from->table_name.str, "", 0);
-
-    if (ddl_log_delete_frm(drop_chain, (const char*) path))
-      goto error;
-  }
-
-  if (ddl_log_write_execute_entry(drop_chain->list->entry_pos,
-                                  (drop_backup ?
-                                    lpt->rollback_chain.execute_entry->entry_pos :
-                                    0),
+  if (ddl_log_write_execute_entry(drop_chain->list->entry_pos, cond_entry,
                                   &drop_chain->execute_entry))
     goto error;
   mysql_mutex_unlock(&LOCK_gdl);
@@ -6777,16 +6764,41 @@ error:
 static inline
 bool write_log_drop_shadow_frm(ALTER_PARTITION_PARAM_TYPE *lpt)
 {
-  bool res= write_log_drop_frm(lpt, &lpt->rollback_chain, false);
+  char path[FN_REFLEN + 1];
+  build_table_shadow_filename(path, sizeof(path) - 1, lpt);
+
+  bool res= write_log_drop_frm(&lpt->rollback_chain, path, 0);
+  /* Store this entry number so we can disable it if write shadow frm fails*/
   if (!res)
     lpt->drop_shadow_frm= lpt->rollback_chain.main_entry;
   return res;
 }
 
+
 static inline
 bool write_log_drop_backup_frm(ALTER_PARTITION_PARAM_TYPE *lpt)
 {
-  return write_log_drop_frm(lpt, &lpt->cleanup_chain, true);
+  char path[FN_REFLEN + 1];
+  build_table_shadow_filename(path, sizeof(path) - 1, lpt, "backup");
+
+  return write_log_drop_frm(&lpt->cleanup_chain, path,
+                            lpt->rollback_chain.execute_entry->entry_pos);
+}
+
+
+/*
+  Log drop of source table FRM for CONVERT IN
+*/
+static inline
+bool write_log_drop_converted_frm(ALTER_PARTITION_PARAM_TYPE *lpt)
+{
+  char path[FN_REFLEN + 1];
+  TABLE_LIST *table_from= lpt->table_list->next_local;
+  build_table_filename(path, sizeof(path) - 1, table_from->db.str,
+                       table_from->table_name.str, "", 0);
+
+  return write_log_drop_frm(&lpt->cleanup_chain, path,
+                            lpt->rollback_chain.execute_entry->entry_pos);
 }
 
 
@@ -7202,10 +7214,12 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
         ERROR_INJECT("convert_partition_6") ||
         write_log_drop_backup_frm(lpt) ||
         ERROR_INJECT("convert_partition_7") ||
-        mysql_write_frm(lpt, WFRM_LOG_RESTORE) ||
+        write_log_drop_converted_frm(lpt) ||
         ERROR_INJECT("convert_partition_8") ||
-        mysql_write_frm(lpt, WFRM_BACKUP_AND_INSTALL) ||
+        mysql_write_frm(lpt, WFRM_LOG_RESTORE) ||
         ERROR_INJECT("convert_partition_9") ||
+        mysql_write_frm(lpt, WFRM_BACKUP_AND_INSTALL) ||
+        ERROR_INJECT("convert_partition_10") ||
         backup_log_alter_partition(lpt) ||
         alter_partition_binlog(lpt))
     {

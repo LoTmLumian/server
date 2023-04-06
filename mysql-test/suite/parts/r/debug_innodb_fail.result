@@ -11402,7 +11402,7 @@ a	b
 UNLOCK TABLES;
 DROP TABLE t1;
 set @@debug_dbug= @save_dbug;
-# Iterating 15 fail-points
+# Iterating 16 fail-points
 set @save_dbug= @@debug_dbug;
 # Fail-point 1: fail_create_before_create_frm
 set @@debug_dbug= "+d,fail_create_before_create_frm";
@@ -13482,7 +13482,167 @@ DROP TABLE IF EXISTS tp10;
 Warnings:
 Note	1051	Unknown table 'test.tp10'
 set @@debug_dbug= @save_dbug;
-# Fail-point 13: fail_alter_partition_binlog_1
+# Fail-point 13: fail_convert_partition_10
+set @@debug_dbug= "+d,fail_convert_partition_10";
+RESET MASTER;
+CREATE TABLE t1 (a INT, b VARCHAR(64))
+ENGINE = 'InnoDB'
+PARTITION BY LIST (a)
+(PARTITION p0 VALUES IN (0,1,2,3,4,5,6,7,8,9),
+PARTITION p10 VALUES IN (11,12,13,14,15,16,17,18,19),
+PARTITION p20 VALUES IN (25,26,27,28,29),
+PARTITION p30 VALUES IN (31,32,33,34,35,36,37,38,39));
+INSERT INTO t1 VALUES
+(1, "Original from partition p0"),
+(2, "Original from partition p0"),
+(3, "Original from partition p0"),
+(4, "Original from partition p0"),
+(11, "Original from partition p1"),
+(12, "Original from partition p1"),
+(13, "Original from partition p1"),
+(14, "Original from partition p1");
+# d,fail_convert_partition_10: BEFORE failure
+db.opt
+t1#P#p0.ibd
+t1#P#p10.ibd
+t1#P#p20.ibd
+t1#P#p30.ibd
+t1.frm
+t1.par
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+ PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (0,1,2,3,4,5,6,7,8,9) ENGINE = InnoDB,
+ PARTITION `p10` VALUES IN (11,12,13,14,15,16,17,18,19) ENGINE = InnoDB,
+ PARTITION `p20` VALUES IN (25,26,27,28,29) ENGINE = InnoDB,
+ PARTITION `p30` VALUES IN (31,32,33,34,35,36,37,38,39) ENGINE = InnoDB)
+SELECT * FROM t1;
+a	b
+1	Original from partition p0
+11	Original from partition p1
+12	Original from partition p1
+13	Original from partition p1
+14	Original from partition p1
+2	Original from partition p0
+3	Original from partition p0
+4	Original from partition p0
+ALTER TABLE t1 CONVERT PARTITION p10 TO TABLE tp10;
+# d,fail_convert_partition_10: AFTER failure
+show warnings;
+Level	Code	Message
+db.opt
+t1#P#p0.ibd
+t1#P#p20.ibd
+t1#P#p30.ibd
+t1.frm
+t1.par
+tp10.frm
+tp10.ibd
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+ PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (0,1,2,3,4,5,6,7,8,9) ENGINE = InnoDB,
+ PARTITION `p20` VALUES IN (25,26,27,28,29) ENGINE = InnoDB,
+ PARTITION `p30` VALUES IN (31,32,33,34,35,36,37,38,39) ENGINE = InnoDB)
+SELECT * FROM t1;
+a	b
+1	Original from partition p0
+2	Original from partition p0
+3	Original from partition p0
+4	Original from partition p0
+ALTER,InnoDB,1,test,t1,id: 1,InnoDB,1,test,t1,id: 2
+master-bin.000001	#	Query	#	#	use `test`; ALTER TABLE t1 CONVERT PARTITION p10 TO TABLE tp10
+DROP TABLE t1;
+DROP TABLE IF EXISTS tp10;
+RESET MASTER;
+CREATE TABLE t1 (a INT, b VARCHAR(64))
+ENGINE = 'InnoDB'
+PARTITION BY LIST (a)
+(PARTITION p0 VALUES IN (0,1,2,3,4,5,6,7,8,9),
+PARTITION p10 VALUES IN (11,12,13,14,15,16,17,18,19),
+PARTITION p20 VALUES IN (25,26,27,28,29),
+PARTITION p30 VALUES IN (31,32,33,34,35,36,37,38,39));
+INSERT INTO t1 VALUES
+(1, "Original from partition p0"),
+(2, "Original from partition p0"),
+(3, "Original from partition p0"),
+(4, "Original from partition p0"),
+(11, "Original from partition p1"),
+(12, "Original from partition p1"),
+(13, "Original from partition p1"),
+(14, "Original from partition p1");
+# d,fail_convert_partition_10: BEFORE failure (under LOCK TABLE)
+db.opt
+t1#P#p0.ibd
+t1#P#p10.ibd
+t1#P#p20.ibd
+t1#P#p30.ibd
+t1.frm
+t1.par
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+ PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (0,1,2,3,4,5,6,7,8,9) ENGINE = InnoDB,
+ PARTITION `p10` VALUES IN (11,12,13,14,15,16,17,18,19) ENGINE = InnoDB,
+ PARTITION `p20` VALUES IN (25,26,27,28,29) ENGINE = InnoDB,
+ PARTITION `p30` VALUES IN (31,32,33,34,35,36,37,38,39) ENGINE = InnoDB)
+SELECT * FROM t1;
+a	b
+1	Original from partition p0
+11	Original from partition p1
+12	Original from partition p1
+13	Original from partition p1
+14	Original from partition p1
+2	Original from partition p0
+3	Original from partition p0
+4	Original from partition p0
+LOCK TABLE t1 WRITE;
+ALTER TABLE t1 CONVERT PARTITION p10 TO TABLE tp10;
+# d,fail_convert_partition_10: AFTER failure (under LOCK TABLE)
+show warnings;
+Level	Code	Message
+db.opt
+t1#P#p0.ibd
+t1#P#p20.ibd
+t1#P#p30.ibd
+t1.frm
+t1.par
+tp10.frm
+tp10.ibd
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+ PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (0,1,2,3,4,5,6,7,8,9) ENGINE = InnoDB,
+ PARTITION `p20` VALUES IN (25,26,27,28,29) ENGINE = InnoDB,
+ PARTITION `p30` VALUES IN (31,32,33,34,35,36,37,38,39) ENGINE = InnoDB)
+SELECT * FROM t1;
+a	b
+1	Original from partition p0
+2	Original from partition p0
+3	Original from partition p0
+4	Original from partition p0
+master-bin.000001	#	Query	#	#	use `test`; ALTER TABLE t1 CONVERT PARTITION p10 TO TABLE tp10
+UNLOCK TABLES;
+DROP TABLE t1;
+DROP TABLE IF EXISTS tp10;
+set @@debug_dbug= @save_dbug;
+# Fail-point 14: fail_alter_partition_binlog_1
 set @@debug_dbug= "+d,fail_alter_partition_binlog_1";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))
@@ -13656,7 +13816,7 @@ DROP TABLE IF EXISTS tp10;
 Warnings:
 Note	1051	Unknown table 'test.tp10'
 set @@debug_dbug= @save_dbug;
-# Fail-point 14: fail_alter_partition_binlog_2
+# Fail-point 15: fail_alter_partition_binlog_2
 set @@debug_dbug= "+d,fail_alter_partition_binlog_2";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))

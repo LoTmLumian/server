@@ -8094,7 +8094,7 @@ a	b
 4	Original from partition p0
 DROP TABLE t1;
 set @@debug_dbug= @save_dbug;
-# Iterating 19 crash-points
+# Iterating 20 crash-points
 set @save_dbug= @@debug_dbug;
 # Crash-point 1: crash_create_before_create_frm
 set @@debug_dbug= "+d,crash_create_before_create_frm";
@@ -9215,7 +9215,95 @@ DROP TABLE IF EXISTS tp10;
 Warnings:
 Note	1051	Unknown table 'test.tp10'
 set @@debug_dbug= @save_dbug;
-# Crash-point 13: crash_alter_partition_binlog_1
+# Crash-point 13: crash_convert_partition_10
+set @@debug_dbug= "+d,crash_convert_partition_10";
+RESET MASTER;
+CREATE TABLE t1 (a INT, b VARCHAR(64))
+ENGINE = 'InnoDB'
+PARTITION BY LIST (a)
+(PARTITION p0 VALUES IN (0,1,2,3,4,5,6,7,8,9),
+PARTITION p10 VALUES IN (11,12,13,14,15,16,17,18,19),
+PARTITION p20 VALUES IN (25,26,27,28,29),
+PARTITION p30 VALUES IN (31,32,33,34,35,36,37,38,39));
+INSERT INTO t1 VALUES
+(1, "Original from partition p0"),
+(2, "Original from partition p0"),
+(3, "Original from partition p0"),
+(4, "Original from partition p0"),
+(11, "Original from partition p1"),
+(12, "Original from partition p1"),
+(13, "Original from partition p1"),
+(14, "Original from partition p1");
+# d,crash_convert_partition_10: BEFORE crash
+db.opt
+t1#P#p0.ibd
+t1#P#p10.ibd
+t1#P#p20.ibd
+t1#P#p30.ibd
+t1.frm
+t1.par
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+ PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (0,1,2,3,4,5,6,7,8,9) ENGINE = InnoDB,
+ PARTITION `p10` VALUES IN (11,12,13,14,15,16,17,18,19) ENGINE = InnoDB,
+ PARTITION `p20` VALUES IN (25,26,27,28,29) ENGINE = InnoDB,
+ PARTITION `p30` VALUES IN (31,32,33,34,35,36,37,38,39) ENGINE = InnoDB)
+SELECT * FROM t1;
+a	b
+1	Original from partition p0
+11	Original from partition p1
+12	Original from partition p1
+13	Original from partition p1
+14	Original from partition p1
+2	Original from partition p0
+3	Original from partition p0
+4	Original from partition p0
+ALTER TABLE t1 CONVERT PARTITION p10 TO TABLE tp10;
+# d,crash_convert_partition_10: AFTER crash
+db.opt
+t1#P#p0.ibd
+t1#P#p20.ibd
+t1#P#p30.ibd
+t1.frm
+t1.par
+tp10.frm
+tp10.ibd
+# d,crash_convert_partition_10: AFTER recovery
+db.opt
+t1#P#p0.ibd
+t1#P#p20.ibd
+t1#P#p30.ibd
+t1.frm
+t1.par
+tp10.frm
+tp10.ibd
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+ PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (0,1,2,3,4,5,6,7,8,9) ENGINE = InnoDB,
+ PARTITION `p20` VALUES IN (25,26,27,28,29) ENGINE = InnoDB,
+ PARTITION `p30` VALUES IN (31,32,33,34,35,36,37,38,39) ENGINE = InnoDB)
+SELECT * FROM t1;
+a	b
+1	Original from partition p0
+2	Original from partition p0
+3	Original from partition p0
+4	Original from partition p0
+ALTER,InnoDB,1,test,t1,id: 1,InnoDB,1,test,t1,id: 2
+master-bin.000001	#	Query	#	#	use `test`; ALTER TABLE t1 CONVERT PARTITION p10 TO TABLE tp10
+DROP TABLE t1;
+DROP TABLE IF EXISTS tp10;
+set @@debug_dbug= @save_dbug;
+# Crash-point 14: crash_alter_partition_binlog_1
 set @@debug_dbug= "+d,crash_alter_partition_binlog_1";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))
@@ -9310,7 +9398,7 @@ DROP TABLE IF EXISTS tp10;
 Warnings:
 Note	1051	Unknown table 'test.tp10'
 set @@debug_dbug= @save_dbug;
-# Crash-point 14: crash_alter_partition_binlog_2
+# Crash-point 15: crash_alter_partition_binlog_2
 set @@debug_dbug= "+d,crash_alter_partition_binlog_2";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))
@@ -9405,7 +9493,7 @@ DROP TABLE IF EXISTS tp10;
 Warnings:
 Note	1051	Unknown table 'test.tp10'
 set @@debug_dbug= @save_dbug;
-# Crash-point 15: crash_done_partition_1
+# Crash-point 16: crash_done_partition_1
 set @@debug_dbug= "+d,crash_done_partition_1";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))
@@ -9495,7 +9583,7 @@ master-bin.000001	#	Query	#	#	use `test`; ALTER TABLE t1 CONVERT PARTITION p10 T
 DROP TABLE t1;
 DROP TABLE IF EXISTS tp10;
 set @@debug_dbug= @save_dbug;
-# Crash-point 16: crash_done_partition_2
+# Crash-point 17: crash_done_partition_2
 set @@debug_dbug= "+d,crash_done_partition_2";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))
@@ -9585,7 +9673,7 @@ master-bin.000001	#	Query	#	#	use `test`; ALTER TABLE t1 CONVERT PARTITION p10 T
 DROP TABLE t1;
 DROP TABLE IF EXISTS tp10;
 set @@debug_dbug= @save_dbug;
-# Crash-point 17: crash_fail_partition_1,fail_convert_partition_6,
+# Crash-point 18: crash_fail_partition_1,fail_convert_partition_6,
 set @@debug_dbug= "+d,crash_fail_partition_1,fail_convert_partition_6,";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))
@@ -9679,7 +9767,7 @@ DROP TABLE IF EXISTS tp10;
 Warnings:
 Note	1051	Unknown table 'test.tp10'
 set @@debug_dbug= @save_dbug;
-# Crash-point 18: crash_fail_partition_2,fail_convert_partition_6,
+# Crash-point 19: crash_fail_partition_2,fail_convert_partition_6,
 set @@debug_dbug= "+d,crash_fail_partition_2,fail_convert_partition_6,";
 RESET MASTER;
 CREATE TABLE t1 (a INT, b VARCHAR(64))
@@ -10904,8 +10992,6 @@ a	b
 50	50 from t2
 ALTER TABLE t1 CONVERT TABLE t2 TO PARTITION p40 VALUES IN (40, 50);
 # d,crash_convert_partition_8: AFTER crash
-#sql-backup-4-t1.frm
-#sql-backup-4-t1.par
 #sql-shadow-t1.frm
 #sql-shadow-t1.par
 db.opt
@@ -10914,6 +11000,8 @@ t1#P#p10.ibd
 t1#P#p20.ibd
 t1#P#p30.ibd
 t1#P#p40.ibd
+t1.frm
+t1.par
 t2.frm
 # d,crash_convert_partition_8: AFTER recovery
 db.opt
@@ -11025,14 +11113,14 @@ ALTER TABLE t1 CONVERT TABLE t2 TO PARTITION p40 VALUES IN (40, 50);
 # d,crash_convert_partition_9: AFTER crash
 #sql-backup-4-t1.frm
 #sql-backup-4-t1.par
+#sql-shadow-t1.frm
+#sql-shadow-t1.par
 db.opt
 t1#P#p0.ibd
 t1#P#p10.ibd
 t1#P#p20.ibd
 t1#P#p30.ibd
 t1#P#p40.ibd
-t1.frm
-t1.par
 t2.frm
 # d,crash_convert_partition_9: AFTER recovery
 db.opt

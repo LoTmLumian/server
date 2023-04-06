@@ -14,7 +14,8 @@ let $points= 'create_before_create_frm',
   'convert_partition_6',
   'convert_partition_7',
   'convert_partition_8',
-  'convert_partition_9';
+  'convert_partition_9',
+  'convert_partition_10';
 
 let $fail_points= $points, $fail_points, 'EOF';
 let $crash_points= $points, $crash_points,
