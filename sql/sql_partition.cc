@@ -6804,6 +6804,7 @@ bool write_log_drop_converted_frm(ALTER_PARTITION_PARAM_TYPE *lpt)
 
 /*
   Close tables, prepare for reopening under LOCK TABLES.
+
   SYNPOSIS
     alter_partition_lock_handling()
     lpt                        Struct carrying parameters
@@ -7011,6 +7012,7 @@ bool alter_partition_binlog(ALTER_PARTITION_PARAM_TYPE *lpt)
   Actually perform the change requested by ALTER TABLE of partitions
   previously prepared.
 
+  @param thd                           Thread object
   @param table                         Original table object with new part_info
   @param alter_info                    ALTER TABLE info
   @param alter_ctx                     ALTER TABLE context
@@ -7383,10 +7385,12 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
   DBUG_RETURN(fast_end_partition(thd, lpt->copied, lpt->deleted, table_list));
 
 fail:
+  DBUG_ASSERT(thd->is_error());
   CRASH_INJECT("fail_partition_1");
   ddl_log_complete(cleanup_chain);
   CRASH_INJECT("fail_partition_2");
-  /* We may fail to drop partitions due to existing locking, so must unlock first */
+  /* We may fail to drop partitions due to existing locking,
+     so must unlock first */
   alter_partition_lock_handling(lpt);
   (void) ddl_log_revert(thd, rollback_chain, true);
 

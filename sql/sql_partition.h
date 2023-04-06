@@ -297,10 +297,6 @@ bool compare_table_with_partition(THD *thd, TABLE *table,
                                   partition_element *part_elem,
                                   uint part_id);
 bool partition_key_modified(TABLE *table, const MY_BITMAP *fields);
-bool write_log_replace_frm(ALTER_PARTITION_PARAM_TYPE *lpt,
-                            const char *from_path,
-                            const char *to_path);
-
 #else
 #define partition_key_modified(X,Y) 0
 #endif
