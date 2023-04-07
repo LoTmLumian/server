@@ -7072,13 +7072,6 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
     Alter_partition_drop action_drop(lpt);
 
     /*
-       part_info chain contains roll forward actions,
-       cleanup_chain drops shadow frm.
-
-       If cleanup_chain is active part_info chain is not executed.
-    */
-
-    /*
       Now after all checks and setting state on dropped partitions we can
       start the actual dropping of the partitions.
 
@@ -7100,6 +7093,9 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
       after a DROP PARTITION) if one ensured that failed accesses to the
       dropped partitions was aborted for sure (thus only possible for
       transactional engines).
+
+      DDL logging is done in rollback_chain that restores old table before
+      binlogging is done. Otherwise cleanup_chain is used to drop backups.
 
       0) Write an entry that removes the shadow frm file if crash occurs
       1) Write the new frm file as a shadow frm
@@ -7376,8 +7372,13 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
   alter_partition_lock_handling(lpt);
   (void) ddl_log_revert(thd, cleanup_chain, true);
 
-  if (thd->locked_tables_mode)
-    (void) thd->locked_tables_list.reopen_tables(thd, false);
+  if (thd->locked_tables_mode &&
+      (ERROR_INJECT("done_partition_3") ||
+       thd->locked_tables_list.reopen_tables(thd, false)))
+  {
+    thd->locked_tables_list.unlink_all_closed_tables(thd, NULL, 0);
+    goto err;
+  }
 
   thd->variables.option_bits= save_option_bits;
   downgrade_mdl_if_lock_tables_mode(thd, mdl_ticket, MDL_SHARED_NO_READ_WRITE);
@@ -7394,8 +7395,9 @@ fail:
   alter_partition_lock_handling(lpt);
   (void) ddl_log_revert(thd, rollback_chain, true);
 
-  if (thd->locked_tables_mode)
-    (void) thd->locked_tables_list.reopen_tables(thd, false);
+  if (thd->locked_tables_mode &&
+      thd->locked_tables_list.reopen_tables(thd, false))
+    thd->locked_tables_list.unlink_all_closed_tables(thd, NULL, 0);
 
 err:
   thd->variables.option_bits= save_option_bits;
