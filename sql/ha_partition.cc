@@ -4519,6 +4519,7 @@ int ha_partition::write_row(const uchar * buf)
   THD *thd= ha_thd();
   sql_mode_t org_sql_mode= thd->variables.sql_mode;
   bool saved_auto_inc_field_not_null= table->auto_increment_field_not_null;
+  auto *online_log= table->s->online_alter_binlog;
   DBUG_ENTER("ha_partition::write_row");
   DBUG_PRINT("enter", ("partition this: %p", this));
 
@@ -4576,11 +4577,12 @@ int ha_partition::write_row(const uchar * buf)
 
   start_part_bulk_insert(thd, part_id);
 
+  table->s->online_alter_binlog= NULL;
   DBUG_ASSERT(!m_file[part_id]->row_logging);
   error= m_file[part_id]->ha_write_row(buf);
   if (!error && have_auto_increment && !table->s->next_number_keypart)
     set_auto_increment_if_higher(table->next_number_field);
-
+  table->s->online_alter_binlog= online_log;
 exit:
   table->auto_increment_field_not_null= saved_auto_inc_field_not_null;
   thd->variables.sql_mode= org_sql_mode;
@@ -4617,6 +4619,7 @@ int ha_partition::update_row(const uchar *old_data, const uchar *new_data)
   THD *thd= ha_thd();
   uint32 new_part_id, old_part_id= m_last_part;
   int error= 0;
+  auto *online_log= table->s->online_alter_binlog;
   DBUG_ENTER("ha_partition::update_row");
   m_err_rec= NULL;
 
@@ -4659,6 +4662,7 @@ int ha_partition::update_row(const uchar *old_data, const uchar *new_data)
 
   m_last_part= new_part_id;
   start_part_bulk_insert(thd, new_part_id);
+  table->s->online_alter_binlog= NULL;
   DBUG_ASSERT(!m_file[new_part_id]->row_logging);
   if (new_part_id == old_part_id)
   {
@@ -4691,6 +4695,7 @@ int ha_partition::update_row(const uchar *old_data, const uchar *new_data)
     if (unlikely(error))
       goto exit;
   }
+  table->s->online_alter_binlog= online_log;
 
 exit:
   /*
@@ -4789,8 +4794,13 @@ int ha_partition::delete_row(const uchar *buf)
   if (!bitmap_is_set(&(m_part_info->lock_partitions), m_last_part))
     DBUG_RETURN(HA_ERR_NOT_IN_LOCK_PARTITIONS);
 
+  auto *online_log= table->s->online_alter_binlog;
+  table->s->online_alter_binlog= NULL;
   DBUG_ASSERT(!m_file[m_last_part]->row_logging);
+
   error= m_file[m_last_part]->ha_delete_row(buf);
+
+  table->s->online_alter_binlog= online_log;
   DBUG_RETURN(error);
 }
 
