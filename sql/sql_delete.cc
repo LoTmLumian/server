@@ -481,6 +481,12 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd)
     DBUG_RETURN(0);
   }
 #endif
+  if (conds)
+  {
+    /* Rewrite datetime comparison conditions into sargable */
+    conds= conds->top_level_transform(thd, &Item::date_conds_transformer,
+                                      (uchar *) 0);
+  }
   /* Update the table->file->stats.records number */
   table->file->info(HA_STATUS_VARIABLE | HA_STATUS_NO_LOCK);
   set_statistics_for_table(thd, table);
