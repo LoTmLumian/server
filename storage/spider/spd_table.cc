@@ -267,6 +267,20 @@ ha_create_table_option spider_table_option_list[]= {
     HA_TOPTION_STRING("REMOTE_DATABASE", remote_database),
     HA_TOPTION_STRING("REMOTE_TABLE", remote_table), HA_TOPTION_END};
 
+/**
+  Determines how to populate sts (stat) / crd (cardinality) of a
+  spider share
+*/
+enum ha_sts_crd_get_type
+{
+  HA_GET_COPY = 0,              /* Get by copying from wide_share */
+  HA_GET_FETCH = 1,             /* Get by executing a sql query */
+  HA_GET_AFTER_LOCK = 2,        /* Get by executing a sql query after
+                                locking wide_share->sts_mutex. */
+  HA_GET_AFTER_TRYLOCK = 3      /* Get by executing a sql query after
+                                trylocking wide_share->sts_mutex. */
+};
+
 extern HASH spider_open_connections;
 extern HASH spider_ipport_conns;
 extern uint spider_open_connections_id;
@@ -7047,6 +7061,33 @@ void spider_get_partition_info(
   DBUG_VOID_RETURN;
 }
 
+/** Determine the get type for spider_get_sts() */
+enum ha_sts_crd_get_type spider_get_sts_type(
+  SPIDER_SHARE *share,
+  double sts_interval,
+  int sts_sync
+) {
+  if (sts_sync == 0)
+    return HA_GET_FETCH;
+  if (!share->wide_share->sts_init)
+  {
+    pthread_mutex_lock(&share->wide_share->sts_mutex);
+    if (!share->wide_share->sts_init)
+      return HA_GET_AFTER_LOCK;
+    pthread_mutex_unlock(&share->wide_share->sts_mutex);
+    return HA_GET_COPY;
+  }
+  if (difftime(share->sts_get_time, share->wide_share->sts_get_time) <
+      sts_interval)
+    return HA_GET_COPY;
+  if (!pthread_mutex_trylock(&share->wide_share->sts_mutex))
+    return HA_GET_AFTER_TRYLOCK;
+  return HA_GET_COPY;
+}
+
+/**
+  Populates share->stat or share->wide_share->stat with table status.
+*/
 int spider_get_sts(
   SPIDER_SHARE *share,
   int link_idx,
@@ -7058,44 +7099,12 @@ int spider_get_sts(
   int sts_sync_level,
   uint flag
 ) {
-  int get_type;
   int error_num = 0;
   bool need_to_get = TRUE;
   DBUG_ENTER("spider_get_sts");
 
-  if (
-    sts_sync == 0
-  ) {
-    /* get */
-    get_type = 1;
-  } else if (
-    !share->wide_share->sts_init
-  ) {
-    pthread_mutex_lock(&share->wide_share->sts_mutex);
-    if (!share->wide_share->sts_init)
-    {
-      /* get after mutex_lock */
-      get_type = 2;
-    } else {
-      pthread_mutex_unlock(&share->wide_share->sts_mutex);
-      /* copy */
-      get_type = 0;
-    }
-  } else if (
-    difftime(share->sts_get_time, share->wide_share->sts_get_time) <
-      sts_interval
-  ) {
-    /* copy */
-    get_type = 0;
-  } else if (
-    !pthread_mutex_trylock(&share->wide_share->sts_mutex)
-  ) {
-    /* get after mutex_trylock */
-    get_type = 3;
-  } else {
-    /* copy */
-    get_type = 0;
-  }
+  enum ha_sts_crd_get_type get_type =
+    spider_get_sts_type(share, sts_interval, sts_sync);
   if (
     !share->sts_init &&
     share->table_share->tmp_table == NO_TMP_TABLE &&
@@ -7117,17 +7126,17 @@ int spider_get_sts(
 
   if (need_to_get)
   {
-    if (get_type == 0)
-      /* Copy table status from share to share->wide_share */
-      spider_copy_sts_to_share(share, share->wide_share);
+    if (get_type == HA_GET_COPY)
+      share->stat = share->wide_share->stat;
     else {
       /* Executes a `show table status` query and store the results in
       share->stat */
       error_num = spider_db_show_table_status(spider, link_idx, sts_mode, flag);
     }
   }
-  if (get_type >= 2)
+  if (get_type >= HA_GET_AFTER_LOCK)
     pthread_mutex_unlock(&share->wide_share->sts_mutex);
+
   if (error_num)
   {
     SPIDER_PARTITION_HANDLER *partition_handler =
@@ -7135,7 +7144,7 @@ int spider_get_sts(
     if (
       !share->wide_share->sts_init &&
       sts_sync >= sts_sync_level &&
-      get_type > 1 &&
+      get_type > HA_GET_FETCH &&
       partition_handler &&
       partition_handler->handlers &&
       partition_handler->handlers[0] == spider
@@ -7164,8 +7173,8 @@ int spider_get_sts(
         {
           error_num = 0;
           thd->clear_error();
-          get_type = 0;
-          spider_copy_sts_to_share(share, share->wide_share);
+          get_type = HA_GET_COPY;
+          share->stat = share->wide_share->stat;
           break;
         }
       }
@@ -7173,7 +7182,8 @@ int spider_get_sts(
     if (error_num)
       DBUG_RETURN(error_num);
   }
-  if (sts_sync >= sts_sync_level && get_type > 0)
+
+  if (sts_sync >= sts_sync_level && get_type > HA_GET_COPY)
   {
     spider_copy_sts_to_wide_share(share->wide_share, share);
     share->wide_share->sts_get_time = tmp_time;
@@ -7184,6 +7194,34 @@ int spider_get_sts(
   DBUG_RETURN(0);
 }
 
+/** Determine the get type for spider_get_crd() */
+enum ha_sts_crd_get_type spider_get_crd_type(
+  SPIDER_SHARE *share,
+  double crd_interval,
+  int crd_sync
+) {
+  if (crd_sync == 0)
+    return HA_GET_FETCH;
+  if (!share->wide_share->crd_init)
+  {
+    pthread_mutex_lock(&share->wide_share->crd_mutex);
+    if (!share->wide_share->crd_init)
+      return HA_GET_AFTER_LOCK;
+    pthread_mutex_unlock(&share->wide_share->crd_mutex);
+    return HA_GET_COPY;
+  }
+  if (difftime(share->crd_get_time, share->wide_share->crd_get_time) <
+      crd_interval)
+    return HA_GET_COPY;
+  if (!pthread_mutex_trylock(&share->wide_share->crd_mutex))
+    return HA_GET_AFTER_TRYLOCK;
+  return HA_GET_COPY;
+}
+
+/**
+  Populates share->cardinality or share->wide_share->cardinality with
+  table index.
+*/
 int spider_get_crd(
   SPIDER_SHARE *share,
   int link_idx,
@@ -7195,44 +7233,12 @@ int spider_get_crd(
   int crd_sync,
   int crd_sync_level
 ) {
-  int get_type;
   int error_num = 0;
   bool need_to_get = TRUE;
   DBUG_ENTER("spider_get_crd");
 
-  if (
-    crd_sync == 0
-  ) {
-    /* get */
-    get_type = 1;
-  } else if (
-    !share->wide_share->crd_init
-  ) {
-    pthread_mutex_lock(&share->wide_share->crd_mutex);
-    if (!share->wide_share->crd_init)
-    {
-      /* get after mutex_lock */
-      get_type = 2;
-    } else {
-      pthread_mutex_unlock(&share->wide_share->crd_mutex);
-      /* copy */
-      get_type = 0;
-    }
-  } else if (
-    difftime(share->crd_get_time, share->wide_share->crd_get_time) <
-      crd_interval
-  ) {
-    /* copy */
-    get_type = 0;
-  } else if (
-    !pthread_mutex_trylock(&share->wide_share->crd_mutex)
-  ) {
-    /* get after mutex_trylock */
-    get_type = 3;
-  } else {
-    /* copy */
-    get_type = 0;
-  }
+  enum ha_sts_crd_get_type get_type =
+    spider_get_crd_type(share, crd_interval, crd_sync);
   if (
     !share->crd_init &&
     share->table_share->tmp_table == NO_TMP_TABLE &&
@@ -7254,14 +7260,14 @@ int spider_get_crd(
 
   if (need_to_get)
   {
-    if (get_type == 0)
+    if (get_type == HA_GET_COPY)
       spider_copy_crd_to_share(share, share->wide_share,
         table->s->fields);
     else {
       error_num = spider_db_show_index(spider, link_idx, table, crd_mode);
     }
   }
-  if (get_type >= 2)
+  if (get_type >= HA_GET_AFTER_LOCK)
     pthread_mutex_unlock(&share->wide_share->crd_mutex);
   if (error_num)
   {
@@ -7270,7 +7276,7 @@ int spider_get_crd(
     if (
       !share->wide_share->crd_init &&
       crd_sync >= crd_sync_level &&
-      get_type > 1 &&
+      get_type > HA_GET_FETCH &&
       partition_handler &&
       partition_handler->handlers &&
       partition_handler->handlers[0] == spider
@@ -7299,7 +7305,7 @@ int spider_get_crd(
         {
           error_num = 0;
           thd->clear_error();
-          get_type = 0;
+          get_type = HA_GET_COPY;
           spider_copy_crd_to_share(share, share->wide_share,
             table->s->fields);
           break;
@@ -7309,7 +7315,7 @@ int spider_get_crd(
     if (error_num)
       DBUG_RETURN(error_num);
   }
-  if (crd_sync >= crd_sync_level && get_type > 0)
+  if (crd_sync >= crd_sync_level && get_type > HA_GET_COPY)
   {
     spider_copy_crd_to_wide_share(share->wide_share, share,
       table->s->fields);
